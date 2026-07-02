@@ -81,7 +81,9 @@ function updateFavCount() {
 
 function getFilteredCountries() {
   let base = currentTab === 'fav' ? ALL_COUNTRIES.filter(c => isFav(c.iso_code)) : ALL_COUNTRIES;
-  if (currentAlertFilter) base = base.filter(c => c.alert_level === currentAlertFilter);
+  if (currentAlertFilter) {
+    base = base.filter(c => (c.national_level || c.alert_level || '없음') === currentAlertFilter);
+  }
   return base;
 }
 
@@ -298,7 +300,10 @@ async function renderMap() {
 function renderLegend() {
   const box = document.getElementById('mapLegend');
   const counts = {};
-  ALL_COUNTRIES.forEach(c => { counts[c.alert_level] = (counts[c.alert_level] || 0) + 1; });
+  ALL_COUNTRIES.forEach(c => {
+    const mapLevel = c.national_level || c.alert_level || '없음';
+    counts[mapLevel] = (counts[mapLevel] || 0) + 1;
+  });
 
   box.innerHTML = Object.entries(ALERT_COLORS).map(([level, color]) => {
     const active = currentAlertFilter === level;
