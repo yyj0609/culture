@@ -32,7 +32,6 @@ let mapInstance = null;
 let geoLayer = null;
 let markerLayerGroup = null;
 let partialIconGroup = null;
-let _popupOpenHandler = null; // 지도 레벨 팝업 핸들러 (renderMap 재호출 시 교체)
 let currentDetail = null;
 let favorites = JSON.parse(localStorage.getItem(FAV_KEY) || '[]');
 const detailCache = {}; // iso -> full country detail JSON, populated lazily for map popups
@@ -186,36 +185,34 @@ async function fetchDetailCached(iso) {
   return detail;
 }
 
-function popupHTML(c) {
+function popupHTML(c, extra) {
   const fav = isFav(c.iso_code);
+  // extra=undefined → 로딩 중, extra='' → 내용 없음(섹션 숨김), extra=문자열 → 표시
+  const extraSection = extra === undefined
+    ? `<div class="map-popup-extra"><p class="brief-empty">불러오는 중...</p></div>`
+    : (extra ? `<div class="map-popup-extra">${extra}</div>` : '');
   return `
-    <div class="map-popup" data-iso="${c.iso_code}">
+    <div class="map-popup">
       <div class="map-popup-head">
         <img src="${c.flag_image || ''}" alt="" onerror="this.style.visibility='hidden'" />
         <span class="map-popup-name">${c.country_kr}</span>
         <span style="margin-left:auto;cursor:pointer;" onclick="toggleFav('${c.iso_code}', event)">${fav ? '❤️' : '🤍'}</span>
       </div>
       <span class="alert-badge alert-${c.national_level || c.alert_level}">${c.national_level || c.alert_level}</span>
-      <div class="map-popup-extra"><p class="brief-empty">불러오는 중...</p></div>
+      ${extraSection}
       <button class="map-popup-btn" onclick="selectCountry('${c.iso_code}')">자세히 보기 →</button>
     </div>`;
 }
 
-async function fillPopupExtra(c, box) {
-  if (!box) return;
-  try {
-    const detail = await fetchDetailCached(c.iso_code);
-    const partials = (detail.travel_alert?.regions || []).filter(r => r.partial);
-    const partialHTML = partials.length
-      ? `<p class="map-popup-line">⚠️ ${partials.slice(0, 2).map(r => `${r.area || '일부 지역'}: ${r.level}`).join(' / ')}${partials.length > 2 ? ' 외' : ''}</p>`
-      : '';
-    const etiquette = detail.culture_ai?.etiquette || '';
-    const tip = etiquette ? etiquette.split('.')[0] + (etiquette.includes('.') ? '.' : '') : '';
-    const tipHTML = tip ? `<p class="map-popup-line">🤝 ${tip}</p>` : '';
-    box.innerHTML = (partialHTML + tipHTML) || '';
-  } catch (err) {
-    box.innerHTML = '';
-  }
+function buildPopupExtra(detail) {
+  const partials = (detail.travel_alert?.regions || []).filter(r => r.partial);
+  const partialHTML = partials.length
+    ? `<p class="map-popup-line">⚠️ ${partials.slice(0, 2).map(r => `${r.area || '일부 지역'}: ${r.level}`).join(' / ')}${partials.length > 2 ? ' 외' : ''}</p>`
+    : '';
+  const etiquette = detail.culture_ai?.etiquette || '';
+  const tip = etiquette ? etiquette.split('.')[0] + (etiquette.includes('.') ? '.' : '') : '';
+  const tipHTML = tip ? `<p class="map-popup-line">🤝 ${tip}</p>` : '';
+  return partialHTML + tipHTML;
 }
 
 async function renderMap() {
@@ -238,22 +235,6 @@ async function renderMap() {
   const filtered = getFilteredCountries();
   const byIso = Object.fromEntries(filtered.map(c => [c.iso_code, c]));
 
-  // map 레벨 팝업 lazy-load 핸들러
-  // setTimeout(0)으로 이벤트 루프 다음 틱에 실행해 Leaflet의 DOM 렌더 완료를 보장,
-  // e.popup.getElement() 대신 document.querySelector로 실제 DOM에서 직접 탐색
-  if (_popupOpenHandler) mapInstance.off('popupopen', _popupOpenHandler);
-  _popupOpenHandler = () => {
-    setTimeout(() => {
-      const box = document.querySelector('.leaflet-popup-content .map-popup-extra');
-      if (!box) return;
-      const iso = box.closest('[data-iso]')?.dataset?.iso;
-      if (!iso) return;
-      const c = byIso[iso];
-      if (!c) return;
-      fillPopupExtra(c, box).then(() => mapInstance._popup?.update());
-    }, 0);
-  };
-  mapInstance.on('popupopen', _popupOpenHandler);
 
   const borders = await ensureWorldBorders();
   const coveredIso = new Set();
@@ -274,6 +255,12 @@ async function renderMap() {
       const c = byIso[feature.properties.iso_code];
       if (!c) return;
       layer.bindPopup(popupHTML(c), POPUP_OPTIONS);
+      layer.on('popupopen', async () => {
+        try {
+          const detail = await fetchDetailCached(c.iso_code);
+          layer.getPopup()?.setContent(popupHTML(c, buildPopupExtra(detail)));
+        } catch { layer.getPopup()?.setContent(popupHTML(c, '')); }
+      });
       layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.8 }));
       layer.on('mouseout', () => layer.setStyle({ fillOpacity: 0.55 }));
     },
@@ -296,7 +283,13 @@ async function renderMap() {
         border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4);transform:translate(10px,-10px);">!</div>`,
       className: '', iconSize: [16, 16], iconAnchor: [8, 8],
     });
-    L.marker([c.lat, c.lng], { icon, zIndexOffset: 500 }).bindPopup(popupHTML(c), POPUP_OPTIONS).addTo(partialIconGroup);
+    const m = L.marker([c.lat, c.lng], { icon, zIndexOffset: 500 }).bindPopup(popupHTML(c), POPUP_OPTIONS).addTo(partialIconGroup);
+    m.on('popupopen', async () => {
+      try {
+        const detail = await fetchDetailCached(c.iso_code);
+        m.getPopup()?.setContent(popupHTML(c, buildPopupExtra(detail)));
+      } catch { m.getPopup()?.setContent(popupHTML(c, '')); }
+    });
   });
 
   setTimeout(() => mapInstance.invalidateSize(), 100);
