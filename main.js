@@ -222,8 +222,10 @@ async function renderMap() {
     mapInstance = L.map('map', { minZoom: 2, maxBoundsViscosity: 1.0, worldCopyJump: false })
       .setView([10, 10], 2);
     mapInstance.setMaxBounds([[-85, -180], [85, 180]]);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors © CARTO',
+      subdomains: 'abcd',
+      maxZoom: 19,
       noWrap: true,
     }).addTo(mapInstance);
     markerLayerGroup = L.layerGroup().addTo(mapInstance);
